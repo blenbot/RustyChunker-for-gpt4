@@ -5,6 +5,9 @@ use pdfium_render::prelude::*;
 use rayon::prelude::*;
 use std::sync::Arc;
 use log::{info, debug, error};
+use std::sync::Once;
+
+static INIT: Once = Once::new();
 
 /// Parallel processing coordinator for PDF pages
 /// 
@@ -37,10 +40,24 @@ impl ParallelProcessor {
               batch_size, max_parallelism);
         
         // Configure Rayon thread pool for optimal performance
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(max_parallelism)
-            .build_global()
-            .map_err(|e| ProcessingError::ParallelError(format!("Thread pool setup failed: {}", e)))?;
+        // Use a flag to track if initialization was successful
+        let mut thread_pool_error: Option<String> = None;
+        
+        INIT.call_once(|| {
+            if let Err(e) = rayon::ThreadPoolBuilder::new()
+                .num_threads(max_parallelism)
+                .build_global()
+            {
+                error!("Thread pool setup failed: {}", e);
+                // Store the error in our local variable
+                thread_pool_error = Some(format!("Thread pool setup failed: {}", e));
+            }
+        });
+        
+        // Check if thread pool initialization failed and return error to Python
+        if let Some(error_msg) = thread_pool_error {
+            return Err(ProcessingError::ParallelError(error_msg));
+        }
         
         Ok(ParallelProcessor {
             batch_size,
