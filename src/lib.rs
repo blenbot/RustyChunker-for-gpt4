@@ -8,6 +8,11 @@ mod text_extractor;
 mod error;
 mod tiktoken_core;
 mod o200k_vocab;
+mod text_preprocessor;
+mod semantic_segmenter;
+mod chunk_merger;
+mod chunk_overlapper;
+mod semantic_chunker;
 
 use pdf_processor::PdfProcessor;
 
@@ -30,13 +35,20 @@ fn myrustchunker(m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// Main Python-exposed function for processing PDFs
 /// 
 /// This function takes a PDF file path and returns chunk metadata as a list of dictionaries
-/// Each dictionary contains: page, chunk_id, text, and source
+/// Each dictionary contains: page, chunk_id, text, source, and token_count
 /// 
 /// Architecture:
 /// 1. Load PDF using pdfium-render
 /// 2. Extract text from all pages in parallel batches
-/// 3. Apply chunking logic per page (300 words with 60 word overlap)
+/// 3. Apply semantic-aware chunking with tiktoken tokenization (256 tokens, 16 overlap)
 /// 4. Return structured metadata for Python consumption
+/// 
+/// Features:
+/// - Real tiktoken o200k_base tokenization for GPT-4 compatibility
+/// - Semantic awareness: preserves paragraphs, sentences, and headings
+/// - RecursiveTextSplitter-style hierarchical splitting
+/// - Your Python regex cleaning: r'\n\s*\n\s*\n+' -> '\n\n'
+/// - Token-level overlap for context preservation
 #[pyfunction]
 fn process_pdf(py: Python, pdf_path: String) -> PyResult<Vec<PyObject>> {
     // Create tokio runtime with correct API
