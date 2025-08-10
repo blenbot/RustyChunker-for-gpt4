@@ -1,4 +1,5 @@
 use crate::error::ProcessingError;
+use crate::tiktoken_core::CoreBPE;
 use serde::{Serialize, Deserialize};
 use log::debug;
 
@@ -11,84 +12,101 @@ pub struct ChunkMetadata {
     pub chunk_id: usize,
     pub text: String,
     pub source: String,
+    pub token_count: usize,  // New field for token count
 }
 
-/// Text chunking component implementing sliding window logic
+/// Token-based text chunking component using tiktoken's o200k_base
 /// 
 /// Architecture:
-/// - Target chunk size: 300 words
-/// - Overlap size: 60 words  
-/// - Sliding window: moves 240 words (300 - 60) at each step
-/// - Handles edge cases: pages with <300 words return single chunk
+/// - Target chunk size: 256 tokens (instead of words)
+/// - Overlap size: 16 tokens  
+/// - Sliding window: moves 240 tokens (256 - 16) at each step
+/// - Uses tiktoken's CoreBPE for accurate GPT-4 token counting
+/// - Handles edge cases: pages with <256 tokens return single chunk
 pub struct TextChunker {
-    chunk_size: usize,    // Target words per chunk (300)
-    overlap_size: usize,  // Overlap between chunks (60)
-    step_size: usize,     // How far to move the window (240 = 300 - 60)
+    chunk_size: usize,    // Target tokens per chunk (256)
+    step_size: usize,     // How far to move the window (240 = 256 - 16)
+    tokenizer: CoreBPE,   // tiktoken tokenizer for accurate token counting
 }
 
 impl TextChunker {
-    /// Create new text chunker with specified parameters
-    pub fn new(chunk_size: usize, overlap_size: usize) -> Self {
+    /// Create new text chunker with specified parameters and tiktoken tokenizer
+    pub fn new(chunk_size: usize, overlap_size: usize) -> Result<Self, ProcessingError> {
         let step_size = chunk_size.saturating_sub(overlap_size);
         
-        debug!("Initialized chunker: chunk_size={}, overlap={}, step_size={}", 
+        debug!("Initializing token-based chunker: chunk_size={}, overlap={}, step_size={}", 
                chunk_size, overlap_size, step_size);
         
-        TextChunker {
+        // Initialize tiktoken o200k_base tokenizer
+        let tokenizer = CoreBPE::new_o200k_base()?;
+        
+        Ok(TextChunker {
             chunk_size,
-            overlap_size,
             step_size,
-        }
+            tokenizer,
+        })
     }
     
-    /// Apply chunking logic to page text
+    /// Apply token-based chunking logic to page text
     /// 
     /// Logic:
-    /// 1. If page has ≤300 words: return single chunk (chunk_id=0)
-    /// 2. If page has >300 words: apply sliding window chunking
-    /// 3. Each chunk maintains 60-word overlap with previous chunk
-    /// 4. Final chunk includes all remaining words
+    /// 1. Tokenize the entire page text using tiktoken o200k_base
+    /// 2. If page has ≤256 tokens: return single chunk (chunk_id=0)
+    /// 3. If page has >256 tokens: apply sliding window chunking on tokens
+    /// 4. Each chunk maintains 16-token overlap with previous chunk
+    /// 5. Final chunk includes all remaining tokens
+    /// 6. Convert token ranges back to text for each chunk
     pub fn chunk_page_text(
         &self,
         page_num: usize,
         text: &str,
-        words: Vec<String>,
         source: &str,
     ) -> Result<Vec<ChunkMetadata>, ProcessingError> {
-        let word_count = words.len();
+        debug!("Tokenizing page {}", page_num);
         
-        debug!("Chunking page {}: {} words", page_num, word_count);
+        // Tokenize the entire page text using tiktoken
+        let tokens = self.tokenizer.encode_ordinary(text);
+        let token_count = tokens.len();
         
-        // Case 1: Page has ≤300 words - return single chunk
-        if word_count <= self.chunk_size {
-            debug!("Page {} has ≤{} words, returning single chunk", page_num, self.chunk_size);
+        debug!("Page {} contains {} tokens", page_num, token_count);
+        
+        // Case 1: Page has ≤256 tokens - return single chunk
+        if token_count <= self.chunk_size {
+            debug!("Page {} has ≤{} tokens, returning single chunk", page_num, self.chunk_size);
             
             return Ok(vec![ChunkMetadata {
                 page: page_num,
                 chunk_id: 0,
                 text: text.to_string(),
                 source: source.to_string(),
+                token_count,
             }]);
         }
         
-        // Case 2: Page has >300 words - apply sliding window chunking
-        debug!("Page {} has >{} words, applying sliding window", page_num, self.chunk_size);
+        // Case 2: Page has >256 tokens - apply sliding window chunking
+        debug!("Page {} has >{} tokens, applying sliding window", page_num, self.chunk_size);
         
         let mut chunks = Vec::new();
         let mut chunk_id = 0;
-        let mut start_idx = 0;
+        let mut start_token_idx = 0;
         
-        // Sliding window loop
-        while start_idx < word_count {
-            // Calculate end index for current chunk
-            let end_idx = std::cmp::min(start_idx + self.chunk_size, word_count);
+        // Sliding window loop over tokens
+        while start_token_idx < token_count {
+            // Calculate end token index for current chunk
+            let end_token_idx = std::cmp::min(start_token_idx + self.chunk_size, token_count);
             
-            // Extract words for current chunk
-            let chunk_words = &words[start_idx..end_idx];
-            let chunk_text = chunk_words.join(" ");
+            // Extract tokens for current chunk
+            let chunk_tokens = &tokens[start_token_idx..end_token_idx];
+            let chunk_token_count = chunk_tokens.len();
             
-            debug!("Page {} chunk {}: words {}-{} ({} words)", 
-                   page_num, chunk_id, start_idx, end_idx-1, chunk_words.len());
+            // Decode tokens back to text
+            let chunk_text = self.tokenizer.decode(chunk_tokens)
+                .map_err(|e| ProcessingError::ChunkingError(
+                    format!("Failed to decode tokens for page {} chunk {}: {}", page_num, chunk_id, e)
+                ))?;
+            
+            debug!("Page {} chunk {}: tokens {}-{} ({} tokens)", 
+                   page_num, chunk_id, start_token_idx, end_token_idx-1, chunk_token_count);
             
             // Create chunk metadata
             chunks.push(ChunkMetadata {
@@ -96,16 +114,17 @@ impl TextChunker {
                 chunk_id,
                 text: chunk_text,
                 source: source.to_string(),
+                token_count: chunk_token_count,
             });
             
             // Break if we've reached the end
-            if end_idx >= word_count {
+            if end_token_idx >= token_count {
                 break;
             }
             
-            // Move window forward by step_size (240 words)
-            // This creates the 60-word overlap
-            start_idx += self.step_size;
+            // Move window forward by step_size (240 tokens for 256-16)
+            // This creates the 16-token overlap
+            start_token_idx += self.step_size;
             chunk_id += 1;
             
             // Safety check to prevent infinite loops
@@ -116,7 +135,7 @@ impl TextChunker {
             }
         }
         
-        debug!("Page {} chunking complete: {} chunks generated", page_num, chunks.len());
+        debug!("Page {} token-based chunking complete: {} chunks generated", page_num, chunks.len());
         Ok(chunks)
     }
 }

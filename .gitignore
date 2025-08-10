@@ -1,3 +1,8 @@
 /target
 pdfium.dll
 .venv
+demo.py
+o200k_base.tiktoken
+success.md
+readme.md
+test_token_chunking.py

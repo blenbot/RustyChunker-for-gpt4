@@ -51,7 +51,7 @@ impl PdfProcessor {
         // Initialize components with system-aware configuration
         let parallel_processor = ParallelProcessor::new(logical_cores).await?;
         let text_extractor = TextExtractor::new();
-        let text_chunker = TextChunker::new(300, 60); // 300 words per chunk, 60 word overlap
+        let text_chunker = TextChunker::new(256, 16)?; // 256 tokens per chunk, 16 token overlap
         
         Ok(PdfProcessor {
             parallel_processor,

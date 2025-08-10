@@ -6,6 +6,8 @@ mod chunking;
 mod parallel_processor;
 mod text_extractor;
 mod error;
+mod tiktoken_core;
+mod o200k_vocab;
 
 use pdf_processor::PdfProcessor;
 
@@ -60,6 +62,7 @@ fn process_pdf(py: Python, pdf_path: String) -> PyResult<Vec<PyObject>> {
             dict.set_item("chunk_id", chunk.chunk_id)?;
             dict.set_item("text", chunk.text)?;
             dict.set_item("source", chunk.source)?;
+            dict.set_item("token_count", chunk.token_count)?;  // Add token count to output
             result.push(dict.into());
         }
         

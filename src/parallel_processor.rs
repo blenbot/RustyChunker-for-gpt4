@@ -18,7 +18,6 @@ static INIT: Once = Once::new();
 /// - Optimized for Windows systems with 16 logical cores
 pub struct ParallelProcessor {
     batch_size: usize,      // Pages per batch
-    max_parallelism: usize, // Maximum parallel threads
 }
 
 impl ParallelProcessor {
@@ -61,7 +60,6 @@ impl ParallelProcessor {
         
         Ok(ParallelProcessor {
             batch_size,
-            max_parallelism,
         })
     }
     
@@ -191,36 +189,29 @@ impl ParallelProcessor {
     
     /// Process a single page's pre-extracted text (thread-safe)
     /// 
-    /// Text processing pipeline:
-    /// 1. Count words for chunking decision
-    /// 2. Apply chunking logic (300/60 word rules)
-    /// 3. Generate chunk metadata
+    /// Token-based processing pipeline:
+    /// 1. Apply tiktoken o200k_base tokenization for accurate GPT-4 token counting
+    /// 2. Apply chunking logic (300/60 token rules)
+    /// 3. Generate chunk metadata with token counts
     /// 4. Handle edge cases (empty text, processing errors)
     fn process_single_page_text(
         &self,
         page_idx: usize,
         text: &str,
         source: &Arc<String>,
-        text_extractor: &Arc<&TextExtractor>,
+        _text_extractor: &Arc<&TextExtractor>,
         text_chunker: &Arc<&TextChunker>,
     ) -> Result<Vec<ChunkMetadata>, ProcessingError> {
-        debug!("Processing page {} text", page_idx);
+        debug!("Processing page {} text with token-based chunking", page_idx);
         
-        // Extract words for chunking analysis
-        let words = text_extractor.extract_words(text);
-        let word_count = words.len();
-        
-        debug!("Page {} contains {} words", page_idx, word_count);
-        
-        // Apply chunking logic based on word count
+        // Apply token-based chunking logic using tiktoken
         let chunks = text_chunker.chunk_page_text(
             page_idx + 1, // Convert to 1-based page numbers for user output
             text,
-            words,
             source,
         )?;
         
-        debug!("Page {} generated {} chunks", page_idx, chunks.len());
+        debug!("Page {} generated {} token-based chunks", page_idx, chunks.len());
         Ok(chunks)
     }
 }

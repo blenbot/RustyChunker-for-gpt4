@@ -20,6 +20,11 @@ log = "0.4.27"
 num_cpus = "1.17.0"
 regex = "1.11.1"
 env_logger = "0.11.8"
+# Tiktoken core dependencies
+fancy-regex = "0.14.0"
+rustc-hash = "2.0.0"
+bstr = "1.10.0"
+base64 = "0.22.1"
 
 [lib]
 name = "myrustchunker"

@@ -6,24 +6,16 @@ use log::{debug};
 /// Text extraction component using pdfium
 /// 
 /// This handles the low-level text extraction from PDF pages
-/// and provides word-level tokenization for chunking
 pub struct TextExtractor {
-    // Regex for word boundary detection and cleaning
-    word_regex: Regex,
     cleanup_regex: Regex,
 }
 
 impl TextExtractor {
     pub fn new() -> Self {
-        // Compile regex patterns once for efficiency
-        // Word regex: matches sequences of word characters, handling Unicode
-        let word_regex = Regex::new(r"\b\w+\b").expect("Invalid word regex");
-        
         // Cleanup regex: removes excessive whitespace and normalizes text
         let cleanup_regex = Regex::new(r"\s+").expect("Invalid cleanup regex");
         
         TextExtractor {
-            word_regex,
             cleanup_regex,
         }
     }
@@ -56,31 +48,6 @@ impl TextExtractor {
         
         debug!("Extracted {} characters from page {}", cleaned_text.len(), page_index);
         Ok(cleaned_text)
-    }
-    
-    /// Count words in text using regex word boundaries
-    /// 
-    /// This provides accurate word counting that matches the chunking logic
-    pub fn _count_words(&self, text: &str) -> usize {
-        if text.trim().is_empty() {
-            return 0;
-        }
-        
-        self.word_regex.find_iter(text).count()
-    }
-    
-    /// Extract individual words from text for chunking
-    /// 
-    /// Returns a vector of words that can be used for sliding window chunking
-    pub fn extract_words(&self, text: &str) -> Vec<String> {
-        if text.trim().is_empty() {
-            return vec![];
-        }
-        
-        self.word_regex
-            .find_iter(text)
-            .map(|m| m.as_str().to_string())
-            .collect()
     }
     
     /// Clean and normalize extracted text
